@@ -7,35 +7,62 @@ from datetime import datetime
 BOT_TOKEN = "AAFztA2J9d073Nidw8eqs02mct8Ri8SO6VE"
 CHAT_ID = "8550191978"
 
-stocks = ["RELIANCE.NS","TCS.NS","INFY.NS"]
+stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS"]
 
 def send(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
 def generate_signal(stock):
-    df = yf.download(stock, period="2d", interval="5m")
+    df = yf.download(stock, period="5d", interval="5m")
 
-    df['ema20'] = ta.trend.ema_indicator(df['Close'], window=20)
     df['ema50'] = ta.trend.ema_indicator(df['Close'], window=50)
+    df['ema200'] = ta.trend.ema_indicator(df['Close'], window=200)
     df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
+    df['vol_avg'] = df['Volume'].rolling(20).mean()
+
+    df['recent_high'] = df['High'].rolling(20).max()
+    df['recent_low'] = df['Low'].rolling(20).min()
 
     last = df.iloc[-1]
 
-    if last['ema20'] > last['ema50'] and last['rsi'] > 60:
-        return "BUY", last['Close']
-    elif last['ema20'] < last['ema50'] and last['rsi'] < 40:
-        return "SELL", last['Close']
-    else:
-        return None, None
+    if (
+        last['ema50'] > last['ema200'] and
+        55 < last['rsi'] < 65 and
+        last['Volume'] > 2 * last['vol_avg'] and
+        last['Close'] > last['recent_high']
+    ):
+        return "SUPER BUY", last['Close']
 
-message = "🔥 MOBILE AI SIGNALS 🔥\n\n"
+    elif (
+        last['ema50'] < last['ema200'] and
+        35 < last['rsi'] < 45 and
+        last['Volume'] > 2 * last['vol_avg'] and
+        last['Close'] < last['recent_low']
+    ):
+        return "SUPER SELL", last['Close']
+
+    return None, None
+
+# 🔒 MARKET FILTER
+nifty = yf.download("^NSEI", period="5d", interval="5m")
+nifty['ema200'] = ta.trend.ema_indicator(nifty['Close'], window=200)
+
+market_up = nifty['Close'].iloc[-1] > nifty['ema200'].iloc[-1]
+
+message = "🔥 SUPER AI SIGNALS 🔥\n\n"
 
 for stock in stocks:
     signal, price = generate_signal(stock)
 
     if signal:
-        message += f"{signal} {stock}\nPrice: {round(price,2)}\nTime: {datetime.now().strftime('%H:%M')}\n\n"
+        if "BUY" in signal and not market_up:
+            continue
+
+        message += f"{signal} {stock}\n"
+        message += f"Price: {round(price,2)}\n"
+        message += f"SL: {round(price*0.97,2)}\n"
+        message += f"Target: {round(price*1.05,2)}\n\n"
 
 send(message)
 print(message)
