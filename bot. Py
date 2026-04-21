@@ -4,8 +4,8 @@ import ta
 import requests
 from datetime import datetime
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
+BOT_TOKEN = "AAFztA2J9d073Nidw8eqs02mct8Ri8SO6VE"
+CHAT_ID = "8550191978"
 
 stocks = ["RELIANCE.NS","TCS.NS","INFY.NS"]
 
