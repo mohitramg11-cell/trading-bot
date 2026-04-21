@@ -4,9 +4,11 @@ import ta
 import requests
 from datetime import datetime
 
+# 🔑 TELEGRAM DETAILS
 BOT_TOKEN = "AAFztA2J9d073Nidw8eqs02mct8Ri8SO6VE"
 CHAT_ID = "8550191978"
 
+# 📊 STOCK LIST (Top liquid stocks)
 stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","ICICIBANK.NS",
 "SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","LT.NS","ITC.NS",
 "BHARTIARTL.NS","ASIANPAINT.NS","HINDUNILVR.NS","BAJFINANCE.NS",
@@ -21,60 +23,98 @@ stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","ICICIBANK.NS",
 "CIPLA.NS","SUNPHARMA.NS","APOLLOHOSP.NS",
 "DIXON.NS","HAVELLS.NS","VOLTAS.NS"]
 
+# 📤 TELEGRAM SEND
 def send(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
-def generate_signal(stock):
+# 🧠 SCORE SYSTEM
+def get_score(df):
+    score = 0
+    last = df.iloc[-1]
+
+    if last['ema50'] > last['ema200']:
+        score += 2
+
+    if 55 < last['rsi'] < 65:
+        score += 2
+
+    if last['Volume'] > 1.5 * last['vol_avg']:
+        score += 2
+
+    if last['Close'] > last['recent_high']:
+        score += 2
+
+    return score
+
+# 📈 ENTRY / SL / TARGET
+def get_trade_levels(df, signal):
+    last = df.iloc[-1]
+
+    entry = last['Close']
+    swing_high = df['High'].rolling(10).max().iloc[-1]
+    swing_low = df['Low'].rolling(10).min().iloc[-1]
+
+    if signal == "BUY":
+        sl = swing_low
+        risk = entry - sl
+        target = entry + (risk * 1.5)
+    else:
+        sl = swing_high
+        risk = sl - entry
+        target = entry - (risk * 1.5)
+
+    return entry, sl, target
+
+# 🔒 MARKET FILTER (NIFTY)
+nifty = yf.download("^NSEI", period="5d", interval="5m")
+nifty['ema200'] = ta.trend.ema_indicator(nifty['Close'], window=200)
+
+market_up = nifty['Close'].iloc[-1] > nifty['ema200'].iloc[-1]
+
+# 🔍 STOCK SCAN
+selected = []
+
+for stock in stocks:
     df = yf.download(stock, period="5d", interval="5m")
 
     df['ema50'] = ta.trend.ema_indicator(df['Close'], window=50)
     df['ema200'] = ta.trend.ema_indicator(df['Close'], window=200)
     df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
     df['vol_avg'] = df['Volume'].rolling(20).mean()
-
     df['recent_high'] = df['High'].rolling(20).max()
-    df['recent_low'] = df['Low'].rolling(20).min()
 
-    last = df.iloc[-1]
+    score = get_score(df)
 
-    if (
-        last['ema50'] > last['ema200'] and
-        55 < last['rsi'] < 65 and
-        last['Volume'] > 2 * last['vol_avg'] and
-        last['Close'] > last['recent_high']
-    ):
-        return "SUPER BUY", last['Close']
+    if score >= 6:
+        selected.append((stock, score, df))
 
-    elif (
-        last['ema50'] < last['ema200'] and
-        35 < last['rsi'] < 45 and
-        last['Volume'] > 2 * last['vol_avg'] and
-        last['Close'] < last['recent_low']
-    ):
-        return "SUPER SELL", last['Close']
+# 🎯 TOP 5 STOCKS
+selected = sorted(selected, key=lambda x: x[1], reverse=True)[:5]
 
-    return None, None
+# 📲 MESSAGE BUILD
+message = "🔥 AI TRADE SETUPS 🔥\n\n"
 
-# 🔒 MARKET FILTER
-nifty = yf.download("^NSEI", period="5d", interval="5m")
-nifty['ema200'] = ta.trend.ema_indicator(nifty['Close'], window=200)
+if len(selected) == 0:
+    message += "❌ No strong trades found (Market weak)"
+else:
+    for stock, score, df in selected:
 
-market_up = nifty['Close'].iloc[-1] > nifty['ema200'].iloc[-1]
+        signal = "BUY" if market_up else "SELL"
 
-message = "🔥 SUPER AI SIGNALS 🔥\n\n"
+        entry, sl, target = get_trade_levels(df, signal)
 
-for stock in stocks:
-    signal, price = generate_signal(stock)
+        message += f"""📊 {stock}
+Signal: {signal}
+Entry: {round(entry,2)}
+Target: {round(target,2)}
+SL: {round(sl,2)}
+Score: {score}/8
+Time: {datetime.now().strftime('%H:%M')}
 
-    if signal:
-        if "BUY" in signal and not market_up:
-            continue
+"""
 
-        message += f"{signal} {stock}\n"
-        message += f"Price: {round(price,2)}\n"
-        message += f"SL: {round(price*0.97,2)}\n"
-        message += f"Target: {round(price*1.05,2)}\n\n"
-
+# 📤 SEND TELEGRAM
 send(message)
+
 print(message)
