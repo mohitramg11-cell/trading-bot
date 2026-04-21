@@ -1,0 +1,16 @@
+name: Trading Bot
+
+on:
+  schedule:
+    - cron: "*/15 3-10 * * 1-5"
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install libs
+        run: pip install -r requirements.txt
+      - name: Run Bot
+        run: python bot.py
