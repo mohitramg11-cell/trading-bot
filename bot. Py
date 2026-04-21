@@ -1,0 +1,41 @@
+import yfinance as yf
+import pandas as pd
+import ta
+import requests
+from datetime import datetime
+
+BOT_TOKEN = "YOUR_BOT_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
+
+stocks = ["RELIANCE.NS","TCS.NS","INFY.NS"]
+
+def send(msg):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+
+def generate_signal(stock):
+    df = yf.download(stock, period="2d", interval="5m")
+
+    df['ema20'] = ta.trend.ema_indicator(df['Close'], window=20)
+    df['ema50'] = ta.trend.ema_indicator(df['Close'], window=50)
+    df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
+
+    last = df.iloc[-1]
+
+    if last['ema20'] > last['ema50'] and last['rsi'] > 60:
+        return "BUY", last['Close']
+    elif last['ema20'] < last['ema50'] and last['rsi'] < 40:
+        return "SELL", last['Close']
+    else:
+        return None, None
+
+message = "🔥 MOBILE AI SIGNALS 🔥\n\n"
+
+for stock in stocks:
+    signal, price = generate_signal(stock)
+
+    if signal:
+        message += f"{signal} {stock}\nPrice: {round(price,2)}\nTime: {datetime.now().strftime('%H:%M')}\n\n"
+
+send(message)
+print(message)
