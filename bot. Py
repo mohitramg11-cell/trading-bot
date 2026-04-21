@@ -5,8 +5,8 @@ import requests
 from datetime import datetime
 
 # 🔑 TELEGRAM DETAILS
-BOT_TOKEN = "AAFztA2J9d073Nidw8eqs02mct8Ri8SO6VE"
-CHAT_ID = "8550191978"
+BOT_TOKEN = "8550191978:AAFztA2J9d073Nidw8eqs02mct8Ri8SO6VE"
+CHAT_ID = "1160483967"
 
 # 📊 STOCK LIST (Top liquid stocks)
 stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","ICICIBANK.NS",
