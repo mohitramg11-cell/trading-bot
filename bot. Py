@@ -4,117 +4,153 @@ import ta
 import requests
 from datetime import datetime
 
-# 🔑 TELEGRAM DETAILS
-BOT_TOKEN = "8550191978:AAFztA2J9d073Nidw8eqs02mct8Ri8SO6VE"
+# 🔑 TELEGRAM
+BOT_TOKEN = "8550191978:AAEo2HeVwMBU9C4k0ZpT6j0K5SK4bXXg0NU"
 CHAT_ID = "1160483967"
 
-# 📊 STOCK LIST (Top liquid stocks)
-stocks = ["RELIANCE.NS","TCS.NS","INFY.NS","HDFCBANK.NS","ICICIBANK.NS",
-"SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","LT.NS","ITC.NS",
-"BHARTIARTL.NS","ASIANPAINT.NS","HINDUNILVR.NS","BAJFINANCE.NS",
-"BAJAJFINSV.NS","MARUTI.NS","TATAMOTORS.NS","TATASTEEL.NS",
-"JSWSTEEL.NS","ADANIENT.NS","ADANIPORTS.NS","POWERGRID.NS",
-"NTPC.NS","ULTRACEMCO.NS","COALINDIA.NS",
-
-# extra high movement stocks
-"IRCTC.NS","ZOMATO.NS","NYKAA.NS","PAYTM.NS",
-"PNB.NS","BANKBARODA.NS","INDUSINDBK.NS",
-"HEROMOTOCO.NS","EICHERMOT.NS","DRREDDY.NS",
-"CIPLA.NS","SUNPHARMA.NS","APOLLOHOSP.NS",
-"DIXON.NS","HAVELLS.NS","VOLTAS.NS"]
-
-# 📤 TELEGRAM SEND
 def send(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
-# 🧠 SCORE SYSTEM
-def get_score(df):
-    score = 0
-    last = df.iloc[-1]
+# 🔗 OPTION CHAIN FETCH
+def get_option_chain(index):
+    if index == "NIFTY":
+        url = "https://www.nseindia.com/api/option-chain-indices?symbol=NIFTY"
+    else:
+        url = "https://www.nseindia.com/api/option-chain-indices?symbol=BANKNIFTY"
 
-    if last['ema50'] > last['ema200']:
-        score += 2
+    headers = {"User-Agent": "Mozilla/5.0"}
+    s = requests.Session()
+    s.get("https://www.nseindia.com", headers=headers)
+    res = s.get(url, headers=headers)
+    return res.json()
 
-    if 55 < last['rsi'] < 65:
-        score += 2
+# 📊 OI ANALYSIS
+def analyze_oi(data):
+    ce_oi = pe_oi = 0
 
-    if last['Volume'] > 1.5 * last['vol_avg']:
-        score += 2
+    for item in data['records']['data']:
+        if 'CE' in item and 'PE' in item:
+            ce_oi += item['CE']['openInterest']
+            pe_oi += item['PE']['openInterest']
 
-    if last['Close'] > last['recent_high']:
-        score += 2
+    pcr = pe_oi / ce_oi if ce_oi != 0 else 0
 
-    return score
+    if pcr > 1.2:
+        return "BULLISH", pcr
+    elif pcr < 0.8:
+        return "BEARISH", pcr
+    return "NEUTRAL", pcr
 
-# 📈 ENTRY / SL / TARGET
-def get_trade_levels(df, signal):
-    last = df.iloc[-1]
+# 🎯 OI WALLS
+def get_oi_walls(data):
+    max_ce = max_pe = 0
+    ce_strike = pe_strike = 0
 
-    entry = last['Close']
-    swing_high = df['High'].rolling(10).max().iloc[-1]
-    swing_low = df['Low'].rolling(10).min().iloc[-1]
+    for item in data['records']['data']:
+        if 'CE' in item and item['CE']['openInterest'] > max_ce:
+            max_ce = item['CE']['openInterest']
+            ce_strike = item['strikePrice']
+
+        if 'PE' in item and item['PE']['openInterest'] > max_pe:
+            max_pe = item['PE']['openInterest']
+            pe_strike = item['strikePrice']
+
+    return ce_strike, pe_strike
+
+# 🧠 GAMMA SIGNAL
+def gamma_signal(price, ce_wall, pe_wall, pcr):
+    if price > ce_wall and pcr > 1:
+        return "BUY"
+    elif price < pe_wall and pcr < 1:
+        return "SELL"
+    return None
+
+# 📈 HTF TREND
+def htf_trend(df):
+    df['ema50'] = ta.trend.ema_indicator(df['Close'], window=50)
+    df['ema200'] = ta.trend.ema_indicator(df['Close'], window=200)
+
+    if df['ema50'].iloc[-1] > df['ema200'].iloc[-1]:
+        return "BUY"
+    elif df['ema50'].iloc[-1] < df['ema200'].iloc[-1]:
+        return "SELL"
+    return None
+
+# 📉 ENTRY
+def entry_levels(df, signal):
+    entry = df['Close'].iloc[-1]
+    swing_high = df['High'].rolling(15).max().iloc[-1]
+    swing_low = df['Low'].rolling(15).min().iloc[-1]
 
     if signal == "BUY":
         sl = swing_low
-        risk = entry - sl
-        target = entry + (risk * 1.5)
+        target = entry + (entry - sl) * 2
     else:
         sl = swing_high
-        risk = sl - entry
-        target = entry - (risk * 1.5)
+        target = entry - (sl - entry) * 2
 
     return entry, sl, target
 
-# 🔒 MARKET FILTER (NIFTY)
-nifty = yf.download("^NSEI", period="5d", interval="5m")
-nifty['ema200'] = ta.trend.ema_indicator(nifty['Close'], window=200)
+# 🎯 OPTION SELECT
+def select_option(symbol, entry, signal):
+    step = 100 if symbol == "^NSEBANK" else 50
+    atm = round(entry / step) * step
 
-market_up = nifty['Close'].iloc[-1] > nifty['ema200'].iloc[-1]
+    if signal == "BUY":
+        return f"{atm - step} CE"
+    else:
+        return f"{atm + step} PE"
 
-# 🔍 STOCK SCAN
-selected = []
+# 🔄 MAIN
+indices = {
+    "NIFTY": "^NSEI",
+    "BANKNIFTY": "^NSEBANK"
+}
 
-for stock in stocks:
-    df = yf.download(stock, period="5d", interval="5m")
+message = "🔥 PRO OPTIONS BOT 🔥\n\n"
 
-    df['ema50'] = ta.trend.ema_indicator(df['Close'], window=50)
-    df['ema200'] = ta.trend.ema_indicator(df['Close'], window=200)
-    df['rsi'] = ta.momentum.rsi(df['Close'], window=14)
-    df['vol_avg'] = df['Volume'].rolling(20).mean()
-    df['recent_high'] = df['High'].rolling(20).max()
+for name, symbol in indices.items():
 
-    score = get_score(df)
+    df15 = yf.download(symbol, period="5d", interval="15m")
+    df5 = yf.download(symbol, period="5d", interval="5m")
 
-    if score >= 6:
-        selected.append((stock, score, df))
+    trend = htf_trend(df15)
 
-# 🎯 TOP 5 STOCKS
-selected = sorted(selected, key=lambda x: x[1], reverse=True)[:5]
+    if not trend:
+        message += f"{name} → No trend\n\n"
+        continue
 
-# 📲 MESSAGE BUILD
-message = "🔥 AI TRADE SETUPS 🔥\n\n"
+    oc_data = get_option_chain(name)
+    oi_bias, pcr = analyze_oi(oc_data)
+    ce_wall, pe_wall = get_oi_walls(oc_data)
 
-if len(selected) == 0:
-    message += "❌ No strong trades found (Market weak)"
-else:
-    for stock, score, df in selected:
+    price = df5['Close'].iloc[-1]
+    gamma = gamma_signal(price, ce_wall, pe_wall, pcr)
 
-        signal = "BUY" if market_up else "SELL"
+    if gamma and gamma == trend:
+        entry, sl, target = entry_levels(df5, gamma)
+        option = select_option(symbol, entry, gamma)
 
-        entry, sl, target = get_trade_levels(df, signal)
+        message += f"""📊 {name}
+Signal: {gamma}
+Trend: {trend}
+PCR: {round(pcr,2)}
 
-        message += f"""📊 {stock}
-Signal: {signal}
+CE Wall: {ce_wall}
+PE Wall: {pe_wall}
+
+🎯 Option: {option}
 Entry: {round(entry,2)}
-Target: {round(target,2)}
 SL: {round(sl,2)}
-Score: {score}/8
+Target: {round(target,2)}
+
 Time: {datetime.now().strftime('%H:%M')}
 
 """
 
-# 📤 SEND TELEGRAM
-send(message)
+    else:
+        message += f"{name} → No strong setup\n\n"
 
+send(message)
 print(message)
